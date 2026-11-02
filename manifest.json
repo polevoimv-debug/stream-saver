@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Сохранить видеопоток",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Находит HLS и MP4 на открытой странице и сохраняет видео на диск.",
   "minimum_chrome_version": "120",
   "permissions": ["activeTab", "scripting", "storage", "offscreen", "downloads", "unlimitedStorage"],

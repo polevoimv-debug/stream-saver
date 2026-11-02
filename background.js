@@ -61,6 +61,32 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message.type === 'export') {
       return chrome.downloads.download({url: message.url, filename: message.name, conflictAction: 'uniquify'});
     }
+    if (message.type === 'cancel-export') {
+      await chrome.downloads.cancel(message.id);
+      return;
+    }
+    if (message.type === 'delete-export') {
+      const query = {id:message.id};
+      let [item] = await chrome.downloads.search(query);
+      if (!item) return 'История Chrome уже очищена. Проверить или удалить файл не удалось.';
+      if (item.byExtensionId !== chrome.runtime.id) throw Error('Этот файл создан другой загрузкой.');
+      if (item.state === 'in_progress') {
+        await chrome.downloads.cancel(item.id);
+        [item] = await chrome.downloads.search(query);
+      }
+      let note = '';
+      if (item?.state === 'complete') {
+        if (item.exists) {
+          const matches = await chrome.downloads.search({filename:item.filename, state:'complete'});
+          if (matches.some(other => other.id !== item.id && other.endTime >= item.endTime)) {
+            throw Error('По этому пути Chrome сохранил другой файл. Файл оставлен на диске.');
+          }
+          await chrome.downloads.removeFile(item.id);
+        } else note = 'Файла уже нет по исходному пути.';
+      } else if (item?.state === 'in_progress') throw Error('Chrome ещё завершает отмену. Повторите удаление.');
+      await chrome.downloads.erase(query);
+      return note;
+    }
     if (message.type === 'status') {
       const [item] = await chrome.downloads.search({id: message.id});
       if (!item) throw Error('Chrome не нашёл загрузку.');

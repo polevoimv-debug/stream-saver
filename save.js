@@ -26,7 +26,7 @@ async function loadSelection(id) {
   }
   const version = ++batch;
   ++selection;
-  save.disabled = true;
+  save.disabled = $('defer').disabled = true;
   const payload = (await chrome.storage.session.get(id))[id] || {};
   const {urls = [], error} = payload;
   status.textContent = 'Ищем качество и аудиодорожки…';
@@ -65,7 +65,7 @@ function changeAudio() {
   for (const t of tracks) audio.add(new Option([t.name, t.language && t.language !== t.name && t.language].filter(Boolean).join(' · ') || 'Основная'));
   if (!tracks.length) audio.add(new Option('Звук из исходного видео'));
   audio.disabled = tracks.length < 2;
-  status.textContent = 'Выберите параметры и нажмите «Сохранить». После добавления в очередь вкладку можно закрыть.';
+  status.textContent = 'Выберите параметры и нажмите «Скачать сейчас» или «В очередь». После добавления в очередь вкладку можно закрыть.';
 }
 function changeSource() {
   quality.replaceChildren(...selectedSource().variants.map(v => new Option(label(v))));
@@ -78,14 +78,14 @@ audio.onchange = changeAudioStatus;
 function changeAudioStatus() { status.textContent = 'Выбран звук «' + audio.selectedOptions[0].text + '».'; }
 async function prepare() {
   const token = ++selection;
-  save.disabled = true;
+  save.disabled = $('defer').disabled = true;
   if (!sources.length) return;
   const v = selectedVariant();
   try {
     const media = await plan(selectedSource(), v, v.audio?.[audio.selectedIndex]);
     if (token !== selection) return;
     prepared = media;
-    save.disabled = false;
+    save.disabled = $('defer').disabled = false;
   } catch (e) { if (token === selection) status.textContent = e.message; }
 }
 for (const control of [source, quality, audio]) control.addEventListener('change', prepare);
@@ -97,14 +97,16 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 });
 await connect();
 await loadSelection(location.hash.slice(1));
-save.onclick = async () => {
+async function addFilm(deferred) {
   const media = prepared;
   const variant = selectedVariant();
   const detail = label(variant) + ' · ' + audio.selectedOptions[0].text;
   const name = safeName($('filename').value);
   try {
     const filename = name + (variant.height ? '-' + variant.height + 'p' : '') + '.' + media.ext;
-    await enqueue(media, filename, detail);
+    await enqueue(media, filename, detail, deferred);
     status.textContent = 'Добавлено в общую очередь. Можно закрыть эту вкладку и плеер. Чтобы вернуться к очереди, нажмите значок расширения.';
   } catch (e) { status.textContent = e.name === 'AbortError' ? 'Выбор файла отменён.' : e.message; }
-};
+}
+save.onclick = () => addFilm(false);
+$('defer').onclick = () => addFilm(true);
