@@ -1,78 +1,44 @@
-import {transfer} from './media.js';
-
-const pending = [];
-let running = false;
-
-export function enqueue(media, file, detail) {
-  document.querySelector('#empty').hidden = true;
-  const row = document.createElement('li');
-  const name = document.createElement('strong');
-  name.textContent = file.name + ' · ' + detail;
-  const status = document.createElement('p');
-  const bar = document.createElement('progress');
-  bar.max = 100;
-  bar.value = 0;
-  const pause = document.createElement('button');
-  const cancel = document.createElement('button');
-  pause.textContent = 'Пауза';
-  cancel.textContent = 'Отменить';
-  row.append(name, status, bar, document.createElement('br'), pause, cancel);
-  document.querySelector('#jobs').append(row);
-  status.textContent = 'В очереди';
-  pause.disabled = true;
-  const controller = new AbortController();
-  let resume, gate, last = 'Начинаем сохранение…';
-  const control = {
-    signal: controller.signal,
-    async check() {
-      while (gate) await gate;
-      controller.signal.throwIfAborted();
-    },
-    committing() {
-      pause.disabled = cancel.disabled = true;
-      status.textContent = 'Завершаем запись на диск…';
-    }
-  };
-  function release() { gate = null; resume?.(); }
-  pause.onclick = () => {
-    if (gate) { release(); pause.textContent = 'Пауза'; status.textContent = last; }
-    else {
-      gate = new Promise(resolve => { resume = resolve; });
-      pause.textContent = 'Продолжить';
-      status.textContent = 'Приостановлено · ' + last;
-    }
-  };
-  cancel.onclick = () => {
-    controller.abort();
-    release();
-    pause.disabled = cancel.disabled = true;
-    status.textContent = 'Отменено';
-  };
-  pending.push(async () => {
-    if (controller.signal.aborted) return;
-    pause.disabled = false;
-    status.textContent = last;
-    try {
-      await transfer(media, file, (ratio, phase) => {
-        if (controller.signal.aborted) return;
-        if (Number.isFinite(ratio)) {
-          const percent = Math.max(0, Math.min(99, Math.floor(100 * ratio)));
-          bar.value = percent;
-          last = phase + ' · ' + percent + '%';
-        } else { bar.removeAttribute('value'); last = phase + ' · размер неизвестен'; }
-        if (!gate && status.textContent !== last) status.textContent = last;
-      }, control);
-      bar.value = 100;
-      status.textContent = '100% · Сохранено';
-    } catch (e) {
-      status.textContent = controller.signal.aborted ? 'Отменено' : 'Ошибка сохранения. ' + e.message;
-    } finally { pause.disabled = cancel.disabled = true; }
-  });
-  if (!running) drain();
+const rows = new Map();
+const list = document.querySelector('#jobs');
+async function send(type, fields = {}) {
+  const result = await chrome.runtime.sendMessage({target:'engine', type, ...fields});
+  if (!result || result.error) throw Error(result?.error || 'Фоновая очередь недоступна.');
+  return result.value;
 }
 
-async function drain() {
-  running = true;
-  try { while (pending.length) await pending.shift()(); }
-  finally { running = false; }
+let revision = -1;
+function render(snapshot) {
+  if (snapshot.revision < revision) return;
+  revision = snapshot.revision;
+  const jobs = snapshot.jobs;
+  document.querySelector('#empty').hidden = jobs.length > 0;
+  for (const job of jobs) {
+    let row = rows.get(job.id);
+    if (!row) {
+      row = document.createElement('li');
+      row.innerHTML = '<strong></strong><p></p><progress max="100"></progress><br><button></button> <button>Отменить</button>';
+      rows.set(job.id,row);
+      list.append(row);
+    }
+    const [name,status,bar,,pause,cancel] = row.children;
+    name.textContent = job.name + ' · ' + job.detail;
+    status.textContent = (job.state === 'paused' ? 'Приостановлено · ' : '') + job.text;
+    if (job.percent == null) bar.removeAttribute('value'); else bar.value = job.percent;
+    pause.textContent = job.state === 'paused' ? 'Продолжить' : 'Пауза';
+    pause.disabled = !['active','paused'].includes(job.state);
+    cancel.disabled = !['waiting','active','paused'].includes(job.state);
+    const act = type => send(type,{id:job.id}).catch(e => {status.textContent = e.message;});
+    pause.onclick = () => act(job.state === 'paused' ? 'resume' : 'pause');
+    cancel.onclick = () => act('cancel');
+  }
+}
+const channel = new BroadcastChannel('stream-saver-queue');
+channel.onmessage = e => render(e.data);
+export async function connect() {
+  const result = await chrome.runtime.sendMessage({target:'broker',type:'ensure'});
+  if (result?.error) throw Error(result.error);
+  render(await send('list'));
+}
+export async function enqueue(media,name,detail) {
+  await send('add',{media,name,detail,id:crypto.randomUUID()});
 }

@@ -1,5 +1,5 @@
 import {inspect, plan} from './media.js';
-import {enqueue} from './queue.js';
+import {connect, enqueue} from './queue.js';
 const $ = id => document.getElementById(id);
 const source = $('source'), quality = $('quality'), audio = $('audio'), save = $('save');
 const status = $('status');
@@ -65,7 +65,7 @@ function changeAudio() {
   for (const t of tracks) audio.add(new Option([t.name, t.language && t.language !== t.name && t.language].filter(Boolean).join(' · ') || 'Основная'));
   if (!tracks.length) audio.add(new Option('Звук из исходного видео'));
   audio.disabled = tracks.length < 2;
-  status.textContent = 'Выберите параметры и нажмите «Сохранить». Оставьте эту вкладку открытой до завершения.';
+  status.textContent = 'Выберите параметры и нажмите «Сохранить». После добавления в очередь вкладку можно закрыть.';
 }
 function changeSource() {
   quality.replaceChildren(...selectedSource().variants.map(v => new Option(label(v))));
@@ -95,6 +95,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   reply({tabId: here.id, windowId: here.windowId});
   loadSelection(message.id);
 });
+await connect();
 await loadSelection(location.hash.slice(1));
 save.onclick = async () => {
   const media = prepared;
@@ -102,8 +103,8 @@ save.onclick = async () => {
   const detail = label(variant) + ' · ' + audio.selectedOptions[0].text;
   const name = safeName($('filename').value);
   try {
-    const file = await showSaveFilePicker({suggestedName: name + (variant.height ? '-' + variant.height + 'p' : '') + '.' + media.ext});
-    enqueue(media, file, detail);
-    status.textContent = 'Файл добавлен. Можно выбрать другие параметры или открыть следующее видео на сайте и снова нажать значок расширения.';
+    const filename = name + (variant.height ? '-' + variant.height + 'p' : '') + '.' + media.ext;
+    await enqueue(media, filename, detail);
+    status.textContent = 'Добавлено в общую очередь. Можно закрыть эту вкладку и плеер. Чтобы вернуться к очереди, нажмите значок расширения.';
   } catch (e) { status.textContent = e.name === 'AbortError' ? 'Выбор файла отменён.' : e.message; }
 };
