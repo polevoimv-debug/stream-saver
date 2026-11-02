@@ -1,5 +1,15 @@
-<!doctype html><html lang="ru"><meta charset="utf-8"><title>Сохранить видео</title>
-<style>body{max-width:48rem;margin:8vh auto;padding:1rem;font:17px/1.55 system-ui;color:#18263b}select,button{padding:.65rem;font:inherit;max-width:100%;margin:.35rem 0}select{display:block;width:100%}p{overflow-wrap:anywhere}</style>
-<h1>Сохранить видео</h1><label for="streams">Потоки на странице</label>
-<select id="streams"></select><button id="save" disabled>Сохранить файл…</button>
-<p role="status" id="status"></p><script type="module" src="save.js"></script></html>
+<!doctype html>
+<html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Сохранить видео</title>
+<style>
+body{max-width:42rem;margin:8vh auto;padding:1rem;font:17px/1.5 system-ui;color:#18263b}h1{line-height:1.15}label{display:block;margin:1rem 0}input,select,button{font:inherit;padding:.55rem;border-radius:.4rem}select{display:block;width:100%}button{margin:1rem 0}progress{width:100%}[hidden]{display:none}
+</style>
+<h1>Сохранить видео</h1><p id="title"></p>
+<label id="sourceRow" hidden>Видео на странице<select id="source"></select></label>
+<label>Качество видео<select id="quality"></select></label>
+<label>Аудиодорожка<select id="audio"></select></label>
+<label>Название файла<input id="filename" type="text" maxlength="160" style="display:block;width:95%"></label>
+<button id="save" disabled>Сохранить…</button>
+
+<p role="status" id="status">Ищем варианты качества и звука…</p>
+<h2>Очередь сохранения</h2><p id="empty">Здесь появятся выбранные файлы.</p><ol id="jobs"></ol>
+<script type="module" src="save.js"></script></html>

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Сохранить видеопоток",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Находит HLS и MP4 на открытой странице и сохраняет видео на диск.",
   "permissions": ["scripting", "storage"],
   "host_permissions": ["http://*/*", "https://*/*"],

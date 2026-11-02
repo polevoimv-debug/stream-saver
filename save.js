@@ -1,37 +1,109 @@
-import {plan, transfer} from './media.js';
-const select = document.querySelector('select');
-const button = document.querySelector('button');
-const status = document.querySelector('#status');
-const id = location.hash.slice(1);
-const {urls = [], error} = (await chrome.storage.session.get(id))[id] || {};
-await chrome.storage.session.remove(id);
-let media;
-let generation = 0;
-for (const url of urls) {
-  const parsed = new URL(url);
-  select.add(new Option(parsed.host + parsed.pathname, url));
+import {inspect, plan} from './media.js';
+import {enqueue} from './queue.js';
+const $ = id => document.getElementById(id);
+const source = $('source'), quality = $('quality'), audio = $('audio'), save = $('save');
+const status = $('status');
+let sources = [], title = '', selection = 0, batch = 0;
+let prepared;
+function safeName(value) {
+  let name = value.normalize('NFC').replace(/[<>:"/\\|?*]/g, ' ')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g,' ').trim().slice(0,110)
+    .replace(/[. ]+$/, '') || 'Видео';
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) name = '_' + name;
+  return name;
 }
+
+function label(v) {
+  return [v.height && v.height + 'p', v.rate && (v.rate/1e6).toLocaleString('ru', {maximumFractionDigits:2}) + ' Мбит/с']
+    .filter(Boolean).join(' · ') || 'Исходное качество';
+}
+
+async function loadSelection(id) {
+  const previous = location.hash.slice(1);
+  if (previous !== id) {
+    history.replaceState(null, '', '#' + id);
+    if (previous) chrome.storage.session.remove(previous);
+  }
+  const version = ++batch;
+  ++selection;
+  save.disabled = true;
+  const payload = (await chrome.storage.session.get(id))[id] || {};
+  const {urls = [], error} = payload;
+  status.textContent = 'Ищем качество и аудиодорожки…';
+  const found = await Promise.allSettled(urls.map(inspect));
+  if (version !== batch) return;
+  let fallback = 'Видео';
+  if (payload.pageUrl) {
+    try {
+      const page = new URL(payload.pageUrl);
+      fallback = decodeURIComponent(page.pathname.split('/').filter(Boolean).pop() || page.hostname)
+        .replace(/\.html?$/i, '').replace(/[-_]+/g, ' ');
+    } catch { /* Use the generic name for an invalid URL. */ }
+  }
+  title = payload.title?.trim() || fallback;
+  $('filename').value = safeName(title);
+  $('title').textContent = title;
+  source.replaceChildren();
+  quality.replaceChildren();
+  audio.replaceChildren();
+  const items = found.filter(r => r.status === 'fulfilled').map(r => r.value);
+  const children = new Set(items.flatMap(s => s.children));
+  sources = items.filter(s => !children.has(s.url)).sort((a,b) => Number(!!b.master) - Number(!!a.master));
+  const shortName = s => new URL(s.url).hostname;
+  sources.forEach((s,i) => source.add(new Option('Видео ' + (i+1) + ' · ' + shortName(s) +
+    (s.direct ? ' · MP4' : ' · HLS'), i)));
+  $('sourceRow').hidden = sources.length < 2;
+  if (sources.length) { changeSource(); await prepare(); }
+  else status.textContent = error || found.find(r => r.status === 'rejected')?.reason?.message ||
+    'Видео не найдено. Запустите его на сайте и снова нажмите значок расширения.';
+}
+const selectedSource = () => sources[source.selectedIndex];
+const selectedVariant = () => selectedSource().variants[quality.selectedIndex];
+function changeAudio() {
+  const tracks = selectedVariant().audio || [];
+  audio.replaceChildren();
+  for (const t of tracks) audio.add(new Option([t.name, t.language && t.language !== t.name && t.language].filter(Boolean).join(' · ') || 'Основная'));
+  if (!tracks.length) audio.add(new Option('Звук из исходного видео'));
+  audio.disabled = tracks.length < 2;
+  status.textContent = 'Выберите параметры и нажмите «Сохранить». Оставьте эту вкладку открытой до завершения.';
+}
+function changeSource() {
+  quality.replaceChildren(...selectedSource().variants.map(v => new Option(label(v))));
+  quality.disabled = quality.length < 2;
+  changeAudio();
+}
+source.onchange = changeSource;
+quality.onchange = changeAudio;
+audio.onchange = changeAudioStatus;
+function changeAudioStatus() { status.textContent = 'Выбран звук «' + audio.selectedOptions[0].text + '».'; }
 async function prepare() {
-  const current = ++generation;
-  button.disabled = true;
-  status.textContent = 'Читаем сведения о потоке…';
+  const token = ++selection;
+  save.disabled = true;
+  if (!sources.length) return;
+  const v = selectedVariant();
   try {
-    const result = await plan(select.value);
-    if (current !== generation) return;
-    media = result;
-    button.disabled = false;
-    status.textContent = 'Формат ' + media.ext.toUpperCase() + '. Частей в файле — ' + media.parts.length + '.';
-  } catch (e) { if (current === generation) status.textContent = e.message; }
+    const media = await plan(selectedSource(), v, v.audio?.[audio.selectedIndex]);
+    if (token !== selection) return;
+    prepared = media;
+    save.disabled = false;
+  } catch (e) { if (token === selection) status.textContent = e.message; }
 }
-select.onchange = prepare;
-if (urls.length) prepare();
-else status.textContent = error || 'Поток не найден. Запустите видео во вкладке сайта и снова нажмите значок расширения.';
-button.onclick = async () => {
-  select.disabled = button.disabled = true;
+for (const control of [source, quality, audio]) control.addEventListener('change', prepare);
+const here = await chrome.tabs.getCurrent();
+chrome.runtime.onMessage.addListener((message, sender, reply) => {
+  if (message.type !== 'open-selection') return;
+  reply({tabId: here.id, windowId: here.windowId});
+  loadSelection(message.id);
+});
+await loadSelection(location.hash.slice(1));
+save.onclick = async () => {
+  const media = prepared;
+  const variant = selectedVariant();
+  const detail = label(variant) + ' · ' + audio.selectedOptions[0].text;
+  const name = safeName($('filename').value);
   try {
-    const file = await showSaveFilePicker({suggestedName: 'video.' + media.ext});
-    await transfer(media.parts, file, (i,n) => { status.textContent = 'Скачивается часть ' + i + ' из ' + n + '…'; });
-    status.textContent = 'Файл сохранён.';
-  } catch (e) { status.textContent = e.name === 'AbortError' ? 'Сохранение отменено.' : 'Ошибка. ' + e.message; }
-  finally { select.disabled = button.disabled = false; }
+    const file = await showSaveFilePicker({suggestedName: name + (variant.height ? '-' + variant.height + 'p' : '') + '.' + media.ext});
+    enqueue(media, file, detail);
+    status.textContent = 'Файл добавлен. Можно выбрать другие параметры или открыть следующее видео на сайте и снова нажать значок расширения.';
+  } catch (e) { status.textContent = e.name === 'AbortError' ? 'Выбор файла отменён.' : e.message; }
 };
